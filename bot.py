@@ -4,7 +4,8 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram import ReplyKeyboardMarkup
 from supabase import create_client, Client
-
+import sys
+print("Python version:", sys.version)
 
 # Cấu hình logging
 logging.basicConfig(
@@ -17,7 +18,6 @@ logger = logging.getLogger(__name__)
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://ifkusnuoxzllhniwkywh.supabase.co")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlma3VzbnVveHpsbGhuaXdreXdoIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTczNjE0MTY1MywiZXhwIjoyMDUxNzE3NjUzfQ.PcLgon96CK6xB8Mf82FRRCZ_b7XvidAQlDD4cQ_wFKM")
 supabase: Client = create_client("https://ifkusnuoxzllhniwkywh.supabase.co", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlma3VzbnVveHpsbGhuaXdreXdoIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTczNjE0MTY1MywiZXhwIjoyMDUxNzE3NjUzfQ.PcLgon96CK6xB8Mf82FRRCZ_b7XvidAQlDD4cQ_wFKM")
-logger.info(f"Supabase version: {supabase.__version__}")
 
 # Token bot Telegram (lấy từ biến môi trường)
 TOKEN = os.getenv("TOKEN", "7615236413:AAE_tfOvqkUGNOqf1XyT5SleHUrG0POl_Lo")
