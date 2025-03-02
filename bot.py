@@ -5,6 +5,9 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from telegram import ReplyKeyboardMarkup
 from supabase import create_client, Client
 
+logger = logging.getLogger(__name__)
+logger.info(f"Supabase version: {supabase.__version__}")
+
 # Cấu hình logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
