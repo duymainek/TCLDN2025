@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Thông tin Supabase (lấy từ biến môi trường)
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://ifkusnuoxzllhniwkywh.supabase.co")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlma3VzbnVveHpsbGhuaXdreXdoIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTczNjE0MTY1MywiZXhwIjoyMDUxNzE3NjUzfQ.PcLgon96CK6xB8Mf82FRRCZ_b7XvidAQlDD4cQ_wFKM")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase: Client = create_client("https://ifkusnuoxzllhniwkywh.supabase.co", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlma3VzbnVveHpsbGhuaXdreXdoIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTczNjE0MTY1MywiZXhwIjoyMDUxNzE3NjUzfQ.PcLgon96CK6xB8Mf82FRRCZ_b7XvidAQlDD4cQ_wFKM")
 
 # Token bot Telegram (lấy từ biến môi trường)
 TOKEN = os.getenv("TOKEN", "7615236413:AAE_tfOvqkUGNOqf1XyT5SleHUrG0POl_Lo")
@@ -83,7 +83,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 def main() -> None:
     logger.info("Starting the bot...")
-    application = Application.builder().token(TOKEN).build()
+    application = Application.builder().token("7615236413:AAE_tfOvqkUGNOqf1XyT5SleHUrG0POl_Lo").build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("ranking", ranking))
