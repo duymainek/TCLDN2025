@@ -1,7 +1,7 @@
 import os
 import logging
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ReplyKeyboardMarkup
 from supabase import create_client, Client
 
 # Cấu hình logging
@@ -11,13 +11,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Thông tin Supabase
-SUPABASE_URL = "https://ifkusnuoxzllhniwkywh.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlma3VzbnVveHpsbGhuaXdreXdoIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTczNjE0MTY1MywiZXhwIjoyMDUxNzE3NjUzfQ.PcLgon96CK6xB8Mf82FRRCZ_b7XvidAQlDD4cQ_wFKM"
+# Thông tin Supabase (lấy từ biến môi trường)
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://ifkusnuoxzllhniwkywh.supabase.co")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlma3VzbnVveHpsbGhuaXdreXdoIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTczNjE0MTY1MywiZXhwIjoyMDUxNzE3NjUzfQ.PcLgon96CK6xB8Mf82FRRCZ_b7XvidAQlDD4cQ_wFKM")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Token bot Telegram
-TOKEN = "7615236413:AAE_tfOvqkUGNOqf1XyT5SleHUrG0POl_Lo"
+# Token bot Telegram (lấy từ biến môi trường)
+TOKEN = os.getenv("TOKEN", "7615236413:AAE_tfOvqkUGNOqf1XyT5SleHUrG0POl_Lo")
 
 # Lưu trữ tạm thời mã code của user
 user_codes = {}
@@ -44,7 +44,6 @@ async def ranking(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     code = user_codes[user_id]
     logger.info(f"Querying ranking for code: {code}")
-    # Query vị trí ranking từ Supabase
     response = supabase.table('users').select('*').eq('code', code).execute()
     if response.data:
         score = response.data[0].get('score', 'Không xác định')
@@ -60,10 +59,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     text = update.message.text
     logger.info(f"Received message from user {user_id}: {text}")
 
-    # Nếu chưa có code, xử lý mã code
     if user_id not in user_codes or not user_codes[user_id]:
         logger.info(f"Checking code: {text}")
-        # Query mã code từ Supabase
         response = supabase.table('users').select('*').eq('code', text).execute()
         if response.data:
             user_codes[user_id] = text
@@ -76,7 +73,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text("Mã code không tồn tại. Vui lòng nhập lại!")
         return
 
-    # Nếu đã có code, xử lý đáp án
     code = user_codes[user_id]
     logger.info(f"Checking answer '{text}' for code: {code}")
     response = supabase.table('answers').select('*').eq('answer', text).execute()
@@ -85,19 +81,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("Chúc mừng! Đáp án của bạn đúng.")
     else:
         logger.info(f"Incorrect or no response for answer '{text}' from user {user_id}")
-    # Nếu không đúng thì không trả lời gì cả
 
 def main() -> None:
-    # Tạo ứng dụng bot
     logger.info("Starting the bot...")
     application = Application.builder().token(TOKEN).build()
 
-    # Thêm các handler
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("ranking", ranking))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # Chạy bot
     application.run_polling()
 
 if __name__ == '__main__':
