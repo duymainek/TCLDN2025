@@ -20,9 +20,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # Token bot Telegram (lấy từ biến môi trường)
 TOKEN = os.getenv("TOKEN", "7615236413:AAE_tfOvqkUGNOqf1XyT5SleHUrG0POl_Lo")
 
-# Lưu trữ tạm thời mã code của user
 user_codes = {}
-
 # Hàm xử lý lệnh /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.message.from_user.id
