@@ -251,6 +251,7 @@ def process_answer(code: str, text: str, user_id: int) -> Optional[str]:
     update_msg_history(code, text, False, 0, False, None)  # ranking_chapter là None cho đáp án sai
     return f"Đáp án *{text}* chưa đúng\\, vui lòng thử lại"
 
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Xử lý tin nhắn từ user (mã code hoặc đáp án) và chặn tin nhắn sau khi xử lý."""
     user_id = update.message.from_user.id
