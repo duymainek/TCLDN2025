@@ -285,7 +285,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Kiểm tra giới hạn nạp đáp án
         can_answer, message = check_answer_limit(code)
         if not can_answer:
-            await update.message.reply_text(f"*Vui lòng đợi {int(float(message.split()[2]))} giây trước khi nạp đáp án tiếp theo\\.*", parse_mode="MarkdownV2")
+            logger.info(f"waiting {message} seconds")
+            await update.message.reply_text(f"*{message}*", parse_mode="MarkdownV2")
             update_msg_history(code, text, None, None, True, None)
             user_blocked[user_id] = False  # Mở chặn sau khi xử lý
             return
