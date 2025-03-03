@@ -6,6 +6,10 @@ from supabase import create_client, Client
 from datetime import datetime, timedelta, timezone
 from typing import Tuple, Optional, List, Dict
 
+import subprocess
+print(subprocess.getoutput("pip freeze | grep gotrue"))
+print(subprocess.getoutput("pip freeze | grep supabase"))
+
 # Cấu hình logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
