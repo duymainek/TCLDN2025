@@ -6,10 +6,6 @@ from supabase import create_client, Client
 from datetime import datetime, timedelta, timezone
 from typing import Tuple, Optional, List, Dict
 
-import subprocess
-print(subprocess.getoutput("pip freeze | grep gotrue"))
-print(subprocess.getoutput("pip freeze | grep supabase"))
-
 # Cấu hình logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -223,8 +219,8 @@ def validate_code(user_id: int, text: str) -> Optional[str]:
 
 def process_answer(code: str, text: str, user_id: int) -> Optional[str]:
     """Xử lý đáp án của user."""
-    logger.info(f"Checking answer '{text}' for code: {code}")
-    response = supabase.table('answers').select('chapter').eq('answer', text).execute()
+    logger.info(f"Checking answer '{text.replace(' ', '').lower()}' for code: {code}")
+    response = supabase.table('answers').select('chapter').eq('answer', text.replace(' ', '').lower()).execute()
     
     increment_answer_count(code)
     
@@ -249,7 +245,7 @@ def process_answer(code: str, text: str, user_id: int) -> Optional[str]:
         
         # Chèn vào chapter_rankings với ranking_chapter
         update_chapter_rankings(chapter, code, current_rank)
-        return f"Chúc mừng Đáp án của bạn đúng\\. Bạn đứng vị trí *{current_rank}* ở mật thư này\\."
+        return f"Đáp án của bạn đúng\\. Bạn đứng vị trí *{current_rank}* ở mật thư này\\."
     
     logger.info(f"Incorrect or no response for answer '{text}' from user {user_id}")
     update_msg_history(code, text, False, 0, False, None)  # ranking_chapter là None cho đáp án sai
