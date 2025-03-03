@@ -134,11 +134,11 @@ def update_user_score(code: str) -> None:
     except Exception as e:
         logger.error(f"Failed to update user score for code {code}: {e}")
 
-def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Xử lý lệnh /start."""
     user_id = update.message.from_user.id
     logger.info(f"User {user_id} started the bot")
-    update.message.reply_text("Xin chào Tôi là chatbot của bạn\\. Vui lòng nhập mã code của bạn\\.", parse_mode="MarkdownV2")
+    await update.message.reply_text("Xin chào Tôi là chatbot của bạn\\. Vui lòng nhập mã code của bạn\\.", parse_mode="MarkdownV2")
 
 def get_score_coefficient(rank: int) -> int:
     """Lấy hệ số điểm từ bảng config dựa trên vị trí xếp hạng."""
@@ -285,7 +285,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Kiểm tra giới hạn nạp đáp án
         can_answer, message = check_answer_limit(code)
         if not can_answer:
-            logger.info(f"waiting {message} seconds")
             await update.message.reply_text(f"*{message}*", parse_mode="MarkdownV2")
             update_msg_history(code, text, None, None, True, None)
             user_blocked[user_id] = False  # Mở chặn sau khi xử lý
