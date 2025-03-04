@@ -5,6 +5,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from supabase import create_client, Client
 from datetime import datetime, timedelta, timezone
 from typing import Tuple, Optional, List, Dict
+from dateutil import parser
 
 # Cấu hình logging
 logging.basicConfig(
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 # Hằng số
 SUPABASE_URL = "https://ifkusnuoxzllhniwkywh.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlma3VzbnVveHpsbGhuaXdreXdoIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTczNjE0MTY1MywiZXhwIjoyMDUxNzE3NjUzfQ.PcLgon96CK6xB8Mf82FRRCZ_b7XvidAQlDD4cQ_wFKM"
-TOKEN = os.getenv("TOKEN", "7615236413:AAE_tfOvqkUGNOqf1XyT5SleHUrG0POl_Lo")
+TOKEN = os.getenv("TOKEN", "7068524025:AAENh2Ns6RZ33tTKLwRLlwMNxZUmd-x9Pi8")
 ANSWER_LIMIT = 3
 WAIT_TIME_SECONDS = 30
 
@@ -58,18 +59,25 @@ def increment_answer_count(code: str) -> None:
 
 def check_answer_limit(code: str) -> Tuple[bool, str]:
     """Kiểm tra xem user có thể nạp đáp án hay không."""
+    logger.info(f"Checking answer limit for code: {code}")
     tracking_data = get_user_answer_tracking(code)
+    logger.info(f"Retrieved tracking data for code {code}: {tracking_data}")
     
     if not tracking_data:
+        logger.info(f"No tracking data found for code {code}, initializing...")
         initialize_answer_tracking(code)
         return True, ""
-
+    logger.info(f"Tracking data found for code {code}: {tracking_data}")
     answer_count = tracking_data['answer_count']
+    logger.debug(f"Current answer count for {code}: {answer_count}")
+    
     # last_reset_timestamp đã là timestampz nên không cần xử lý múi giờ
-    last_reset = datetime.fromisoformat(tracking_data['last_reset_timestamp'].replace('Z', '+00:00'))
+    last_reset = parser.isoparse(tracking_data['last_reset_timestamp'])
+    logger.debug(f"Last reset timestamp for {code}: {last_reset}")
     
     # Sử dụng datetime.now(timezone.utc) để tạo current_time offset-aware
     current_time = datetime.now(timezone.utc)
+    logger.debug(f"Current time (UTC): {current_time}")
 
     if answer_count >= ANSWER_LIMIT:
         if current_time >= last_reset + timedelta(seconds=WAIT_TIME_SECONDS):
@@ -79,14 +87,15 @@ def check_answer_limit(code: str) -> Tuple[bool, str]:
         return False, f"Vui lòng đợi {time_left} giây trước khi nạp đáp án tiếp theo\\."
 
     return True, ""
-def update_msg_history(code: str, msg: str, is_correct: bool, chapter: int, block: bool, ranking_chapter: Optional[int] = None) -> None:
+    
+def update_msg_history(code: str, msg: str, is_correct: bool, chapter: int = 0, block: bool = False, ranking_chapter: Optional[int] = None) -> None:
     """Cập nhật lịch sử tin nhắn vào Supabase với ranking_chapter."""
     try:
         supabase.table('msg_history').insert({
             'code': code,
             'msg': msg,
             'is_correct': is_correct,
-            'chapter': chapter,
+            'chapter': chapter or 0,  # Default to 0 if chapter is None
             'block': block,
             'ranking_chapter': ranking_chapter  # Thêm ranking_chapter
         }).execute()
@@ -193,7 +202,7 @@ async def ranking(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     top_team_name, top_team_score = get_top_team()
     
     if top_team_name:
-        top_info = f"Đội đứng nhất: *{top_team_name}* với *{top_team_score}* điểm"
+        top_info = f"Đội đứng nhất: {top_team_name} với {top_team_score} điểm"
     else:
         top_info = "*Không tìm thấy đội đứng nhất.*"
 
@@ -213,8 +222,7 @@ def validate_code(user_id: int, text: str) -> Optional[str]:
     logger.warning(f"Invalid code: {text}")
     return None
 
-def process_answer(code: str, text: str, user_id: int) -> Optional[str]:
-    """Xử lý đáp án của user."""
+async def process_answer(code: str, text: str, user_id: int) -> Optional[str]:
     logger.info(f"Checking answer '{text.replace(' ', '').lower()}' for code: {code}")
     response = supabase.table('answers').select('chapter').eq('answer', text.replace(' ', '').lower()).execute()
     
@@ -222,29 +230,19 @@ def process_answer(code: str, text: str, user_id: int) -> Optional[str]:
     
     if response.data:
         chapter = response.data[0].get('chapter', 0)
-        # Kiểm tra xem team đã trả lời đúng chapter này chưa
         if has_user_answered_correctly(code, chapter):
-            return f"Đáp án *{text}* đã được ghi nhận trên hệ thống trước đó\\, vui lòng không nhập lại đáp án\\."
+            return f"Đáp án *{text}* đã được ghi nhận trước đó\\, vui lòng không nhập lại\\."
 
         logger.info(f"Correct answer '{text}' from user {user_id}")
         
-        # Lấy danh sách các bản ghi đúng trong chapter này để xác định ranking_chapter
-        correct_answers = supabase.table('msg_history').select('code').eq('chapter', chapter).eq('is_correct', True).execute()
-        current_rank = len(correct_answers.data) + 1  # Vị trí mới (1-based)
-        current_rank = min(current_rank, 8)  # Giới hạn tối đa là 8 (theo config)
-
-        # Tính điểm dựa trên ranking_chapter
-        score = get_score_coefficient(current_rank)
-
-        # Chèn vào msg_history với ranking_chapter
-        update_msg_history(code, text, True, chapter, False, current_rank)
+        # Gọi hàm SQL trong Supabase
+        result = supabase.rpc('update_ranking', {'chapter_id': chapter, 'user_code': code, 'answer_text': text}).execute()
+        current_rank = result.data
         
-        # Chèn vào chapter_rankings với ranking_chapter
-        update_chapter_rankings(chapter, code, current_rank)
         return f"Đáp án của bạn đúng\\. Bạn đứng vị trí *{current_rank}* ở mật thư này\\."
     
-    logger.info(f"Incorrect or no response for answer '{text}' from user {user_id}")
-    update_msg_history(code, text, False, 0, False, None)  # ranking_chapter là None cho đáp án sai
+    logger.info(f"Incorrect answer '{text}' from user {user_id}")
+    update_msg_history(code, text, False, 0, False, None)
     return f"Đáp án *{text}* chưa đúng\\, vui lòng thử lại"
 
 
@@ -287,7 +285,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
 
         # Xử lý đáp án
-        reply = process_answer(code, text, user_id)
+        reply = await process_answer(code, text, user_id)
         if reply:
             await update.message.reply_text(reply, parse_mode="MarkdownV2")
         user_blocked[user_id] = False  # Mở chặn sau khi xử lý
