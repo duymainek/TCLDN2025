@@ -65,11 +65,8 @@ def check_answer_limit(code: str) -> Tuple[bool, str]:
         return True, ""
 
     answer_count = tracking_data['answer_count']
-    # Chuẩn hóa chuỗi last_reset_timestamp, thêm múi giờ UTC nếu cần
-    last_reset_str = tracking_data['last_reset_timestamp']
-    if 'Z' not in last_reset_str and '+' not in last_reset_str:
-        last_reset_str += '+00:00'  # Thêm múi giờ UTC nếu thiếu
-    last_reset = datetime.fromisoformat(last_reset_str.replace('Z', '+00:00'))
+    # last_reset_timestamp đã là timestampz nên không cần xử lý múi giờ
+    last_reset = datetime.fromisoformat(tracking_data['last_reset_timestamp'].replace('Z', '+00:00'))
     
     # Sử dụng datetime.now(timezone.utc) để tạo current_time offset-aware
     current_time = datetime.now(timezone.utc)
@@ -78,11 +75,10 @@ def check_answer_limit(code: str) -> Tuple[bool, str]:
         if current_time >= last_reset + timedelta(seconds=WAIT_TIME_SECONDS):
             reset_answer_tracking(code)
             return True, ""
-        time_left = (last_reset + timedelta(seconds=WAIT_TIME_SECONDS) - current_time).total_seconds()
-        return False, f"Vui lòng đợi {int(time_left)} giây trước khi nạp đáp án tiếp theo\\."
+        time_left = int((last_reset + timedelta(seconds=WAIT_TIME_SECONDS) - current_time).total_seconds())
+        return False, f"Vui lòng đợi {time_left} giây trước khi nạp đáp án tiếp theo\\."
 
     return True, ""
-
 def update_msg_history(code: str, msg: str, is_correct: bool, chapter: int, block: bool, ranking_chapter: Optional[int] = None) -> None:
     """Cập nhật lịch sử tin nhắn vào Supabase với ranking_chapter."""
     try:
