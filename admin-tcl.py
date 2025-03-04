@@ -54,7 +54,7 @@ async def ranking(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     response = supabase.table("users").select("code, name, score").order("score", desc=True).execute()
     ranking_message = "Bảng xếp hạng:\n"
     for i, user in enumerate(response.data, 1):
-        ranking_message += f"{i}. {user['name']} (Mã: {user['code']}) - {user['score']} điểm\n"
+        ranking_message += f"{i}. {user['name']} - {user['score']} điểm\n"
     await update.message.reply_text(ranking_message)
 
 async def addpoints(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -65,6 +65,9 @@ async def addpoints(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not chapters:
         await update.message.reply_text("Không có chapter nào trong danh sách.")
         return ConversationHandler.END
+    
+    # Lưu thông tin rằng đây là tác vụ cộng điểm
+    context.user_data["task"] = "add"
     
     keyboard = [[f"{chapter['name']} (ID: {chapter['id']})"] for chapter in chapters]
     keyboard.append(["Hủy"])
@@ -89,6 +92,9 @@ async def deductpoints(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     if not chapters:
         await update.message.reply_text("Không có chapter nào trong danh sách.")
         return ConversationHandler.END
+    
+    # Lưu thông tin rằng đây là tác vụ trừ điểm
+    context.user_data["task"] = "deduct"
     
     keyboard = [[f"{chapter['name']} (ID: {chapter['id']})"] for chapter in chapters]
     keyboard.append(["Hủy"])
@@ -123,7 +129,7 @@ async def select_chapter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         context.user_data["chapter_id"] = chapter_id
         # Tiếp tục hiển thị danh sách đội theo chapter
-        response = supabase.table("users").select("code, name").eq("chapter", chapter_id).execute()
+        response = supabase.table("users").select("code, name").execute()
         teams = response.data
         
         if not teams:
@@ -139,11 +145,19 @@ async def select_chapter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             resize_keyboard=True
         )
         
-        await update.message.reply_text(
-            "Vui lòng chọn đội để cộng điểm:", 
-            reply_markup=reply_markup
-        )
-        return SELECT_TEAM  # Chuyển sang chọn đội
+        task = context.user_data.get("task", "add")  # Mặc định là "add" nếu không có
+        if task == "add":
+            await update.message.reply_text(
+                "Vui lòng chọn đội để cộng điểm:", 
+                reply_markup=reply_markup
+            )
+            return SELECT_TEAM  # Chuyển sang chọn đội để cộng điểm
+        elif task == "deduct":
+            await update.message.reply_text(
+                "Vui lòng chọn đội để trừ điểm:", 
+                reply_markup=reply_markup
+            )
+            return SELECT_DEDUCT_TEAM  # Chuyển sang chọn đội để trừ điểm
     
     except (IndexError, ValueError):
         await update.message.reply_text("Lựa chọn không hợp lệ. Vui lòng chọn lại từ danh sách.")
@@ -161,11 +175,7 @@ async def select_team(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         user_code = selected_text.split("(Code: ")[1].rstrip(")")
         
         # Lọc đội theo chapter_id
-        chapter_id = context.user_data.get("chapter_id")
-        if chapter_id:
-            response = supabase.table("users").select("code").eq("code", user_code).eq("chapter", chapter_id).execute()
-        else:
-            response = supabase.table("users").select("code").eq("code", user_code).execute()
+        response = supabase.table("users").select("code").eq("code", user_code).execute()
         
         if not response.data:
             await update.message.reply_text("Mã đội không hợp lệ hoặc không thuộc chapter này. Vui lòng thử lại.")
@@ -200,10 +210,12 @@ async def enter_points(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         supabase.table("users").update({"score": new_score}).eq("code", user_code).execute()
         
         admin_code = "admin123"
+        chapter_id = context.user_data.get("chapter_id")
         supabase.table("point_history").insert({
             "user_code": user_code,
             "points_added": points,
-            "admin_code": admin_code
+            "admin_code": admin_code,
+            "chapter": chapter_id
         }).execute()
         
         await update.message.reply_text(
@@ -211,7 +223,7 @@ async def enter_points(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             reply_markup=ReplyKeyboardRemove()
         )
         
-        context.user_data.clear()
+        context.user_data.clear()  # Xóa tất cả dữ liệu, bao gồm "task" và "chapter_id"
         return ConversationHandler.END
     
     except ValueError:
@@ -230,11 +242,7 @@ async def select_deduct_team(update: Update, context: ContextTypes.DEFAULT_TYPE)
         user_code = selected_text.split("(Code: ")[1].rstrip(")")
         
         # Lọc đội theo chapter_id
-        chapter_id = context.user_data.get("chapter_id")
-        if chapter_id:
-            response = supabase.table("users").select("code").eq("code", user_code).eq("chapter", chapter_id).execute()
-        else:
-            response = supabase.table("users").select("code").eq("code", user_code).execute()
+        response = supabase.table("users").select("code").eq("code", user_code).execute()
         
         if not response.data:
             await update.message.reply_text("Mã đội không hợp lệ hoặc không thuộc chapter này. Vui lòng thử lại.")
@@ -272,12 +280,13 @@ async def enter_deduct_points(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         new_score = current_score - points
         supabase.table("users").update({"score": new_score}).eq("code", user_code).execute()
-        
+        chapter_id = context.user_data.get("chapter_id")
         admin_code = "admin123"
         supabase.table("point_deduct_history").insert({
             "user_code": user_code,
             "points_deducted": points,
-            "admin_code": admin_code
+            "admin_code": admin_code,
+            "chapter": chapter_id
         }).execute()
         
         await update.message.reply_text(
@@ -285,7 +294,7 @@ async def enter_deduct_points(update: Update, context: ContextTypes.DEFAULT_TYPE
             reply_markup=ReplyKeyboardRemove()
         )
         
-        context.user_data.clear()
+        context.user_data.clear()  # Xóa tất cả dữ liệu, bao gồm "task" và "chapter_id"
         return ConversationHandler.END
     
     except ValueError:
