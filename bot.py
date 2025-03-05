@@ -3,308 +3,299 @@ import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from supabase import create_client, Client
-from datetime import datetime, timedelta, timezone
-from typing import Tuple, Optional, List, Dict
-from dateutil import parser
+from datetime import datetime, timezone
+from typing import Tuple, Optional, Dict
 
-# Cấu hình logging
+# Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Hằng số
+# Constants
 SUPABASE_URL = "https://ifkusnuoxzllhniwkywh.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlma3VzbnVveHpsbGhuaXdreXdoIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTczNjE0MTY1MywiZXhwIjoyMDUxNzE3NjUzfQ.PcLgon96CK6xB8Mf82FRRCZ_b7XvidAQlDD4cQ_wFKM"
 TOKEN = os.getenv("TOKEN", "7068524025:AAENh2Ns6RZ33tTKLwRLlwMNxZUmd-x9Pi8")
 ANSWER_LIMIT = 3
 WAIT_TIME_SECONDS = 30
 
-# Khởi tạo Supabase client
+# Initialize Supabase client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Lưu trữ mã code của user và trạng thái chặn
-user_codes = {}
-user_blocked = {}  # Dictionary để lưu trạng thái chặn của user (user_id: True/False)
+# State management
+user_codes: Dict[int, str] = {}  # Store user_id -> code mapping
+user_blocked: Dict[int, bool] = {}  # Store user_id -> blocked status
+_config_cache: Dict[int, int] = {}
 
-def get_user_answer_tracking(code: str) -> dict:
-    """Lấy thông tin giới hạn nạp đáp án của user từ Supabase."""
-    response = supabase.table('user_answer_tracking').select('*').eq('code', code).execute()
-    return response.data[0] if response.data else None
+def load_config_cache() -> None:
+    """Load config data from Supabase into cache."""
+    global _config_cache
+    try:
+        response = supabase.table('config').select('rank_position, score_coefficient').execute()
+        _config_cache = {row['rank_position']: row['score_coefficient'] for row in response.data}
+        logger.info(f"Loaded config cache: {_config_cache}")
+    except Exception as e:
+        logger.error(f"Failed to load config cache: {e}")
+        _config_cache = {}  # Default to empty cache if loading fails
 
-def initialize_answer_tracking(code: str) -> None:
-    """Khởi tạo record giới hạn nạp đáp án nếu chưa tồn tại."""
-    supabase.table('user_answer_tracking').insert({
-        'code': code,
-        'answer_count': 0,
-        'last_reset_timestamp': datetime.utcnow().isoformat()
-    }).execute()
+def get_score_coefficient(rank: int) -> int:
+    """Get the score coefficient for a given rank from cache, with fallback to database if not in cache."""
+    if not _config_cache:
+        load_config_cache()  # Load cache if not already loaded
+    
+    if rank in _config_cache:
+        return _config_cache[rank]
+    
+    # Fallback: query database if rank not in cache (should not happen with current data)
+    try:
+        response = supabase.table('config').select('score_coefficient').eq('rank_position', rank).execute()
+        if response.data:
+            _config_cache[rank] = response.data[0]['score_coefficient']
+            return _config_cache[rank]
+        return 10  # Default value if not found (matches your original code)
+    except Exception as e:
+        logger.error(f"Error fetching score coefficient for rank {rank}: {e}")
+        return 10  # Default value on error
 
-def reset_answer_tracking(code: str) -> None:
-    """Reset số lần nạp đáp án sau khi hết thời gian chờ."""
-    supabase.table('user_answer_tracking').update({
-        'answer_count': 0,
-        'last_reset_timestamp': datetime.utcnow().isoformat()
-    }).eq('code', code).execute()
+class BotState:
+    """Manage bot state for users."""
+    @staticmethod
+    def is_blocked(user_id: int) -> bool:
+        return user_blocked.get(user_id, False)
 
-def increment_answer_count(code: str) -> None:
-    """Tăng số lần nạp đáp án."""
-    current_count_response = supabase.table('user_answer_tracking').select('answer_count').eq('code', code).execute()
-    if current_count_response.data:
-        current_count = current_count_response.data[0]['answer_count']
-        supabase.table('user_answer_tracking').update({
-            'answer_count': current_count + 1
-        }).eq('code', code).execute()
+    @staticmethod
+    def set_blocked(user_id: int, blocked: bool) -> None:
+        user_blocked[user_id] = blocked
+
+    @staticmethod
+    def get_code(user_id: int) -> Optional[str]:
+        return user_codes.get(user_id)
+
+    @staticmethod
+    def set_code(user_id: int, code: str) -> None:
+        user_codes[user_id] = code
 
 def check_answer_limit(code: str) -> Tuple[bool, str]:
-    """Kiểm tra xem user có thể nạp đáp án hay không."""
+    """Check if the user can submit another answer using Supabase function."""
     logger.info(f"Checking answer limit for code: {code}")
-    tracking_data = get_user_answer_tracking(code)
-    logger.info(f"Retrieved tracking data for code {code}: {tracking_data}")
+    response = supabase.rpc('check_answer_limit_supabase', {'p_code': code}).execute()
     
-    if not tracking_data:
-        logger.info(f"No tracking data found for code {code}, initializing...")
-        initialize_answer_tracking(code)
-        return True, ""
-    logger.info(f"Tracking data found for code {code}: {tracking_data}")
-    answer_count = tracking_data['answer_count']
-    logger.debug(f"Current answer count for {code}: {answer_count}")
-    
-    # last_reset_timestamp đã là timestampz nên không cần xử lý múi giờ
-    last_reset = parser.isoparse(tracking_data['last_reset_timestamp'])
-    logger.debug(f"Last reset timestamp for {code}: {last_reset}")
-    
-    # Sử dụng datetime.now(timezone.utc) để tạo current_time offset-aware
-    current_time = datetime.now(timezone.utc)
-    logger.debug(f"Current time (UTC): {current_time}")
-
-    if answer_count >= ANSWER_LIMIT:
-        if current_time >= last_reset + timedelta(seconds=WAIT_TIME_SECONDS):
-            reset_answer_tracking(code)
-            return True, ""
-        time_left = int((last_reset + timedelta(seconds=WAIT_TIME_SECONDS) - current_time).total_seconds())
-        return False, f"Vui lòng đợi {time_left} giây trước khi nạp đáp án tiếp theo\\."
-
+    if response.data:
+        return response.data[0]['can_answer'], response.data[0]['wait_message'] or ""
     return True, ""
-    
-def update_msg_history(code: str, msg: str, is_correct: bool, chapter: int = 0, block: bool = False, ranking_chapter: Optional[int] = None) -> None:
-    """Cập nhật lịch sử tin nhắn vào Supabase với ranking_chapter."""
+
+def has_user_answered_correctly(code: str, chapter: int) -> bool:
+    """Check if the user has answered correctly for a chapter using Supabase function."""
+    response = supabase.rpc('has_user_answered_correctly_supabase', {
+        'p_code': code,
+        'p_chapter': chapter
+    }).execute()
+    return response.data[0] if response.data else False
+
+def update_user_score(code: str, score: float) -> None:
+    """Update the user's total score using Supabase function."""
+    try:
+        current_score = get_user_total_score(code)
+        supabase.table('users').update({'score': current_score + score}).eq('code', code).execute()
+    except Exception as e:
+        logger.error(f"Failed to update user score for code {code}: {e}")
+        raise
+
+def update_msg_history(code: str, msg: str, is_correct: bool, chapter: int = 0, block: bool = False) -> None:
+    """Update message history in Supabase without ranking_chapter."""
     try:
         supabase.table('msg_history').insert({
             'code': code,
             'msg': msg,
             'is_correct': is_correct,
-            'chapter': chapter or 0,  # Default to 0 if chapter is None
-            'block': block,
-            'ranking_chapter': ranking_chapter  # Thêm ranking_chapter
+            'chapter': chapter,
+            'block': block
         }).execute()
-        # Cập nhật tổng điểm của user trong bảng users
-        update_user_score(code)
     except Exception as e:
         logger.error(f"Failed to update msg_history: {e}")
-
-def update_chapter_rankings(chapter: int, code: str, ranking_chapter: int) -> None:
-    """Chèn vị trí xếp hạng mới vào bảng chapter_rankings (không cập nhật)."""
-    try:
-        # Kiểm tra xem đội này đã có bản ghi trong chapter_rankings chưa
-        existing_record = supabase.table('chapter_rankings').select('*').eq('chapter', chapter).eq('code', code).execute()
-        if existing_record.data:
-            logger.warning(f"Team {code} has already been ranked for chapter {chapter}")
-            return
-
-        # Chèn mới vào bảng chapter_rankings (không cập nhật)
-        supabase.table('chapter_rankings').insert({
-            'chapter': chapter,
-            'code': code,
-            'ranking_chapter': ranking_chapter  # Sử dụng ranking_chapter
-        }).execute()
-        # Cập nhật tổng điểm của user trong bảng users
-        update_user_score(code)
-    except Exception as e:
-        logger.error(f"Failed to update chapter_rankings: {e}")
-
-def has_user_answered_correctly(code: str, chapter: int) -> bool:
-    """Kiểm tra xem user đã trả lời đúng chapter này chưa."""
-    response = supabase.table('msg_history').select('is_correct').eq('code', code).eq('chapter', chapter).eq('is_correct', True).execute()
-    return bool(response.data)
-
-def update_user_score(code: str) -> None:
-    """Cập nhật tổng điểm của user trong bảng users dựa trên tất cả ranking_chapter."""
-    try:
-        # Tính tổng điểm từ tất cả ranking_chapter trong chapter_rankings
-        total_score = get_user_total_score(code)
-        # Cập nhật cột score trong bảng users
-        supabase.table('users').update({'score': total_score}).eq('code', code).execute()
-    except Exception as e:
-        logger.error(f"Failed to update user score for code {code}: {e}")
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Xử lý lệnh /start."""
-    user_id = update.message.from_user.id
-    logger.info(f"User {user_id} started the bot")
-    await update.message.reply_text("Xin chào Tôi là chatbot của bạn\\. Vui lòng nhập mã code của bạn\\.", parse_mode="MarkdownV2")
+        raise
 
 def get_score_coefficient(rank: int) -> int:
-    """Lấy hệ số điểm từ bảng config dựa trên vị trí xếp hạng."""
+    """Get the score coefficient from the config table."""
     response = supabase.table('config').select('score_coefficient').eq('rank_position', rank).execute()
-    return response.data[0]['score_coefficient'] if response.data else 10  # Mặc định 10 nếu không tìm thấy
+    return response.data[0]['score_coefficient'] if response.data else 10  # Default to 10
 
 def get_user_total_score(code: str) -> float:
-    """Tính tổng điểm của user dựa trên vị trí xếp hạng trong bảng chapter_rankings."""
+    """Calculate the user's total score from the users table."""
     try:
-        # Lấy tất cả vị trí xếp hạng của user trong các chapter
-        rankings_response = supabase.table('chapter_rankings').select('ranking_chapter').eq('code', code).execute()
-        
-        if not rankings_response.data:
-            return 0.0
-
-        total_score = 0.0
-        for record in rankings_response.data:
-            rank = record['ranking_chapter']
-            total_score += get_score_coefficient(rank)
-
-        return total_score
+        user_response = supabase.table('users').select('score').eq('code', code).execute()
+        return user_response.data[0]['score'] if user_response.data else 0.0
     except Exception as e:
         logger.error(f"Error calculating user total score: {e}")
         return 0.0
 
 def get_top_team() -> Tuple[Optional[str], float]:
-    """Lấy thông tin đội đứng nhất (tên đội và tổng điểm)."""
+    """Fetch the top team (name and score) from the users table."""
     try:
-        # Lấy tất cả user và tổng điểm của họ
         users_response = supabase.table('users').select('code, name, score').order('score', desc=True).execute()
-        top_team_name = users_response.data[0]['name'] if users_response.data else None
-        top_team_score = users_response.data[0]['score'] if users_response.data else 0.0
-
-        return top_team_name, top_team_score
+        if users_response.data:
+            return users_response.data[0]['name'], users_response.data[0]['score']
+        return None, 0.0
     except Exception as e:
         logger.error(f"Error getting top team: {e}")
         return None, 0.0
 
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle the /start command."""
+    user_id = update.message.from_user.id
+    logger.info(f"User {user_id} started the bot")
+    await update.message.reply_text(
+        "*Chào mừng bạn đến với TRÒ CHƠI LỚN ĐÀ NẴNG 2025\\!* 🎉\n"
+        "Tôi là *Giao liên* – người bạn đồng hành bí mật của bạn trong hành trình đầy kịch tính này\\. Tôi sẽ luôn *lắng nghe*, *thầm lặng* truyền tải mọi thông điệp của bạn đến Ban Tổ Chức \\(BTC\\) một cách nhanh nhất\\!\n\n"
+        "Bạn có thể ra lệnh cho tôi như một điệp viên thực thụ:\n"
+        "*/ranking* – Xem ngay số điểm của bạn và so kè với đội đang *thống lĩnh* bảng xếp hạng\\!\n\n"
+        "Bây giờ, hãy nhập *mật mã* mà BTC đã giao phó cho bạn\\. Đó là chìa khóa để tôi nhận diện bạn trong cuộc chiến này\\! Nhanh lên nào, thời gian không chờ đợi ai đâu\\! ⏳",
+        parse_mode="MarkdownV2"
+    )
+
 async def ranking(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Xử lý lệnh /ranking, hiển thị tổng điểm của user và đội đứng nhất."""
+    """Handle the /ranking command to show user and top team scores."""
     user_id = update.message.from_user.id
     logger.info(f"User {user_id} requested ranking")
     
-    if user_id not in user_codes or not user_codes[user_id]:
-        logger.warning(f"User {user_id} has not provided a code yet")
-        await update.message.reply_text("*Bạn chưa nhập mã code\\. Vui lòng nhập mã code trước*", parse_mode="MarkdownV2")
+    code = BotState.get_code(user_id)
+    if not code:
+        await update.message.reply_text(
+    "*Ôi không\\!* 😱 *Bạn chưa nhập mật mã\\!* \n"
+    "Nhanh tay nhập *mật mã* mà BTC đã giao cho bạn đi nào\\. Không có nó, tôi không thể xác nhận bạn là chiến binh thực thụ trong hành trình này được\\! ⏰",
+    parse_mode="MarkdownV2"
+)
         return
 
-    code = user_codes[user_id]
-    
-    # Lấy tổng điểm của user hiện tại
     user_score = get_user_total_score(code)
-    logger.info(f"Ranking for code {code}: {user_score} points")
-    
-    # Lấy thông tin đội đứng nhất
     top_team_name, top_team_score = get_top_team()
     
-    if top_team_name:
-        top_info = f"Đội đứng nhất: {top_team_name} với {top_team_score} điểm"
-    else:
-        top_info = "*Không tìm thấy đội đứng nhất.*"
-
-    # Gửi thông báo
+    top_info = f"Đội đứng nhất: {top_team_name} với {top_team_score} điểm" if top_team_name else "*Không tìm thấy đội đứng nhất.*"
     await update.message.reply_text(
-        f"Điểm của bạn là: {user_score} điểm\n{top_info}"
+        f"Điểm của bạn là: {user_score} điểm\n{top_info}",
+        parse_mode="MarkdownV2"
     )
 
 def validate_code(user_id: int, text: str) -> Optional[str]:
-    """Xác thực mã code và trả về tên đơn vị nếu hợp lệ."""
+    """Validate a user code and return the team name if valid."""
     response = supabase.table('users').select('name').eq('code', text).execute()
     if response.data:
-        user_codes[user_id] = text
+        BotState.set_code(user_id, text)
         name = response.data[0].get('name', 'Không xác định')
         logger.info(f"Valid code {text} for user {user_id}, name: {name}")
         return name
     logger.warning(f"Invalid code: {text}")
     return None
 
-async def process_answer(code: str, text: str, user_id: int) -> Optional[str]:
+def process_answer(code: str, text: str, user_id: int) -> Optional[str]:
+    """Process an answer submission, updating msg_history for both correct and incorrect answers, and handle ranking for correct answers."""
     logger.info(f"Checking answer '{text.replace(' ', '').lower()}' for code: {code}")
-    response = supabase.table('answers').select('chapter').eq('answer', text.replace(' ', '').lower()).execute()
     
-    increment_answer_count(code)
+    # Kiểm tra đáp án có đúng không (query bảng answers)
+    answer_response = supabase.table('answers').select('chapter').eq('answer', text.replace(' ', '').lower()).execute()
     
-    if response.data:
-        chapter = response.data[0].get('chapter', 0)
-        if has_user_answered_correctly(code, chapter):
-            return f"Đáp án *{text}* đã được ghi nhận trước đó\\, vui lòng không nhập lại\\."
-
-        logger.info(f"Correct answer '{text}' from user {user_id}")
+    # Cập nhật msg_history trước, sau đó xử lý ranking nếu đúng
+    chapter = answer_response.data[0]['chapter'] if answer_response.data else 0  # Mặc định chapter = 0 nếu không tìm thấy
+    
+    # Luôn cập nhật msg_history (dù đúng hay sai)
+    is_correct = bool(answer_response.data)  # True nếu tìm thấy trong answers, False nếu không
+    update_msg_history(code, text, is_correct, chapter, False)
+    
+    if is_correct:
+        # Nếu đáp án đúng, gọi hàm update_ranking để tính và cập nhật ranking, đồng thời lock chapter_rankings
+        result = supabase.rpc('update_ranking', {
+            'p_chapter_id': chapter,
+            'p_user_code': code,
+            'p_answer_text': text.replace(' ', '').lower()
+        }).execute()
         
-        # Gọi hàm SQL trong Supabase
-        result = supabase.rpc('update_ranking', {'chapter_id': chapter, 'user_code': code, 'answer_text': text}).execute()
-        current_rank = result.data
-        
-        return f"Đáp án của bạn đúng\\. Bạn đứng vị trí *{current_rank}* ở mật thư này\\."
-    
-    logger.info(f"Incorrect answer '{text}' from user {user_id}")
-    update_msg_history(code, text, False, 0, False, None)
-    return f"Đáp án *{text}* chưa đúng\\, vui lòng thử lại"
+        if result.data:
+            current_rank = result.data[0] if isinstance(result.data, list) else result.data
+            score_coeff = get_score_coefficient(current_rank)
+            update_user_score(code, score_coeff)
+            return f"🎉 *Chính xác\\!* Đáp án của bạn hoàn toàn đúng\\! ✅\n\n\\. 🏆 Bạn hiện đang đứng ở *vị trí {current_rank}* trong thử thách mật thư này\\. Tiếp tục cố gắng nhé\\! 🚀\\."
+    else:
+        return f"Đáp án *{text}* chưa đúng\\, vui lòng thử lại"
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Xử lý tin nhắn từ user (mã code hoặc đáp án) và chặn tin nhắn sau khi xử lý."""
+    """Handle incoming user messages (codes or answers) with blocking mechanism."""
     user_id = update.message.from_user.id
     text = update.message.text
     logger.info(f"Received message from user {user_id}: {text}")
 
-    # Kiểm tra trạng thái chặn của user
-    if user_id in user_blocked and user_blocked[user_id]:
-        await update.message.reply_text("*Vui lòng đợi\\, chúng tôi đã kiểm tra*", parse_mode="MarkdownV2")
+    if BotState.is_blocked(user_id):
+        await update.message.reply_text(
+    "⏳ *Vui lòng chờ giây lát\\.\\.\\.* \n\n"
+    "Chúng tôi đang xác minh thông tin của bạn\\. Hãy giữ kết nối và đừng rời đi nhé\\! 🔍", 
+    parse_mode="MarkdownV2"
+)
+
         return
 
-    # Đặt trạng thái chặn cho user
-    user_blocked[user_id] = True
-
+    BotState.set_blocked(user_id, True)
     try:
-        # Gửi thông báo ngay lập tức
-        await update.message.reply_text("*Vui lòng đợi\\, chúng tôi đã kiểm tra*", parse_mode="MarkdownV2")
+        await update.message.reply_text(
+    "⏳ *Vui lòng chờ giây lát\\.\\.\\.* \n\n"
+    "Chúng tôi đang xác minh thông tin của bạn\\. Hãy giữ kết nối và đừng rời đi nhé\\! 🔍", 
+    parse_mode="MarkdownV2"
+)
 
-        # Kiểm tra và xác thực mã code
-        if user_id not in user_codes or not user_codes[user_id]:
+
+        code = BotState.get_code(user_id)
+        if not code:
             name = validate_code(user_id, text)
             if name:
-                await update.message.reply_text(f"Chào mừng đơn vị *{name}*\\.", parse_mode="MarkdownV2")
-                await update.message.reply_text("*Tôi đang luôn sẵn sàng lắng nghe đáp án của bạn\\.*", parse_mode="MarkdownV2")
+                await update.message.reply_text(f"🎉 *Chào mừng đội chơi {name} đến với hành trình đầy thử thách\\!*\n\n"
+    "Hãy sẵn sàng, vì phía trước là những nhiệm vụ cam go đang chờ đón bạn\\. Cùng nhau, chúng ta sẽ chinh phục tất cả\\! 💪", 
+    parse_mode="MarkdownV2")
+
+                await update.message.reply_text(
+    "*📝 Tôi luôn sẵn sàng lắng nghe đáp án của bạn\\!* 📩\n\n"
+    "⚠️ *Lưu ý:* Đừng gửi quá nhiều đáp án liên tục, nếu không bạn có thể bị *tạm khoá* và không thể gửi thêm\\.\n"
+    "Điều đó cũng có thể khiến quá trình xử lý đáp án của bạn *chậm hơn* ⏳\\.\n\n"
+    "Hãy *bình tĩnh*, suy nghĩ kỹ và gửi đáp án chính xác nhất rồi đợi phản hồi nhé\\! ✅",
+    parse_mode="MarkdownV2"
+)
+
             else:
-                await update.message.reply_text("*Mã code không tồn tại\\. Vui lòng nhập lại*", parse_mode="MarkdownV2")
-            user_blocked[user_id] = False  # Mở chặn sau khi xử lý
+                await update.message.reply_text("*Mật mã này không tồn tại\\. Vui lòng nhập lại hoặc liên hệ BTC nhé*", parse_mode="MarkdownV2")
+            BotState.set_blocked(user_id, False)
             return
 
-        code = user_codes[user_id]
-        # Kiểm tra giới hạn nạp đáp án
+        # Check answer limit using Supabase function
         can_answer, message = check_answer_limit(code)
         if not can_answer:
             await update.message.reply_text(f"*{message}*", parse_mode="MarkdownV2")
-            update_msg_history(code, text, None, None, True, None)
-            user_blocked[user_id] = False  # Mở chặn sau khi xử lý
+            BotState.set_blocked(user_id, False)
             return
 
-        # Xử lý đáp án
-        reply = await process_answer(code, text, user_id)
+        # Process the answer
+        reply = process_answer(code, text, user_id)
         if reply:
             await update.message.reply_text(reply, parse_mode="MarkdownV2")
-        user_blocked[user_id] = False  # Mở chặn sau khi xử lý
+        BotState.set_blocked(user_id, False)
 
     except Exception as e:
         logger.error(f"Error processing message from user {user_id}: {e}")
-        await update.message.reply_text("*Đã xảy ra lỗi\\, vui lòng thử lại sau\\.*", parse_mode="MarkdownV2")
-        user_blocked[user_id] = False  # Mở chặn trong trường hợp lỗi
+        await update.message.reply_text("⚠️ *Đã xảy ra lỗi\\!* \n\nVui lòng chụp màn hình lại và liên hệ với BTC để được hỗ trợ \\. ⏳",  
+    parse_mode="MarkdownV2"
+)
+
+        BotState.set_blocked(user_id, False)
 
 def main() -> None:
-    """Khởi động bot."""
+    """Start the Telegram bot."""
     logger.info("Starting the bot...")
     application = Application.builder().token(TOKEN).build()
+    load_config_cache()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("ranking", ranking))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    application.run_polling()
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
     main()
