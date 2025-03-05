@@ -79,11 +79,11 @@ class BotState:
 def check_answer_limit(code: str) -> Tuple[bool, str]:
     """Check if the user can submit another answer using Supabase function."""
     logger.info(f"Checking answer limit for code: {code}")
-    response = supabase.rpc('check_answer_limit_supabase', {'p_code': code}).execute()
+    response = supabase.rpc('check_user_answer_limit', {'p_code': code}).execute()
     logger.info(f"Answer limit check response: {response.data}")
     if response.data:
-        return response.data[0]['can_answer'], response.data[0]['wait_message'] or ""
-    return True, ""
+        return response.data[0]['can_answer'], response.data[0]['message'] or "", response.data[0]['remain_answer']
+    return True, "", 3
 
 def has_user_answered_correctly(code: str, chapter: int) -> bool:
     """Check if the user has answered correctly for a chapter using Supabase function."""
@@ -189,7 +189,7 @@ def validate_code(user_id: int, text: str) -> Optional[str]:
     logger.warning(f"Invalid code: {text}")
     return None
 
-def process_answer(code: str, text: str, user_id: int) -> Optional[str]:
+def process_answer(code: str, text: str, user_id: int, remain_answer: int) -> Optional[str]:
     """Process an answer submission, updating msg_history for both correct and incorrect answers, and handle ranking for correct answers."""
     logger.info(f"Checking answer '{text.replace(' ', '').lower()}' for code: {code}")
     
@@ -214,8 +214,7 @@ def process_answer(code: str, text: str, user_id: int) -> Optional[str]:
             update_user_score(code, score_coeff)
             return f"🎉 *Chính xác\\!* Đáp án của bạn hoàn toàn đúng\\! ✅\n\n\\. 🏆 Bạn hiện đang đứng ở *vị trí {current_rank}* trong thử thách mật thư trạm {chapter} \\. Tiếp tục cố gắng nhé\\! 🚀\\."
     else:
-        return f"Đáp án *{text}* chưa đúng\\, vui lòng thử lại"
-
+        return f"Đáp án *{text}* chưa đúng\\, bạn còn {remain_answer} lần để trả lời" + (f"\\n\\n Vui lòng đợi trong 30s để tiếp tục trả lời" if remain_answer == 0 else "")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle incoming user messages (codes or answers) with blocking mechanism."""
@@ -264,14 +263,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
 
         # Check answer limit using Supabase function
-        can_answer, message = check_answer_limit(code)
+        can_answer, message, remain_answer = check_answer_limit(code)
         if not can_answer:
             await update.message.reply_text(f"*{message}*", parse_mode="MarkdownV2")
             BotState.set_blocked(user_id, False)
             return
 
         # Process the answer
-        reply = process_answer(code, text, user_id)
+        reply = process_answer(code, text, user_id, remain_answer)
         if reply:
             await update.message.reply_text(reply, parse_mode="MarkdownV2")
         BotState.set_blocked(user_id, False)
