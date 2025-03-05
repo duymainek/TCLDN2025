@@ -194,7 +194,7 @@ def process_answer(code: str, text: str, user_id: int, remain_answer: int) -> Op
     logger.info(f"Checking answer '{text.replace(' ', '').lower()}' for code: {code}")
     
     # Kiểm tra đáp án có đúng không (query bảng answers)
-    answer_response = supabase.table('answers').select('chapter','is_lock').eq('answer', text.replace(' ', '').lower()).execute()
+    answer_response = supabase.table('answers').select('chapter, is_lock').eq('answer', text.replace(' ', '').lower()).execute()
     # Luôn cập nhật msg_history (dù đúng hay sai)
     is_correct = bool(answer_response.data)  # True nếu tìm thấy trong answers, False nếu không
     
