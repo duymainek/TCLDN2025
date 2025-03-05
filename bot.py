@@ -194,24 +194,27 @@ def process_answer(code: str, text: str, user_id: int, remain_answer: int) -> Op
     logger.info(f"Checking answer '{text.replace(' ', '').lower()}' for code: {code}")
     
     # Kiểm tra đáp án có đúng không (query bảng answers)
-    answer_response = supabase.table('answers').select('chapter').eq('answer', text.replace(' ', '').lower()).execute()
-    
+    answer_response = supabase.table('answers').select('chapter','is_lock').eq('answer', text.replace(' ', '').lower()).execute()
     # Luôn cập nhật msg_history (dù đúng hay sai)
     is_correct = bool(answer_response.data)  # True nếu tìm thấy trong answers, False nếu không
     
     if is_correct:
         chapter = answer_response.data[0]['chapter'] if answer_response.data else 0  # Mặc định chapter = 0 nếu không tìm thấy
-
+        is_chapter_lock = answer_response.data[0]['is_lock']
+        if is_chapter_lock:
+            return f"Trạm {chapter} đã được khóa, bạn không thể trả lời được nữa"
         result = supabase.rpc('update_ranking', {
             'p_chapter_id': chapter,
             'p_user_code': code,
             'p_answer_text': text.replace(' ', '').lower()
         }).execute()
+        supabase.table('user_answer_tracking').update({'answer_count': 0}).eq('code', code).execute()
         
         if result.data:
             current_rank = result.data[0] if isinstance(result.data, list) else result.data
             score_coeff = get_score_coefficient(current_rank)
             update_user_score(code, score_coeff)
+            # Reset answer count for the user after correct answer
             return f"🎉 *Chính xác\\!* Đáp án của bạn hoàn toàn đúng\\! ✅\n\n\\. 🏆 Bạn hiện đang đứng ở *vị trí {current_rank}* trong thử thách mật thư trạm {chapter} \\. Tiếp tục cố gắng nhé\\! 🚀\\."
     else:
         return f"Đáp án *{text}* chưa đúng\\, bạn còn {remain_answer} lần để trả lời" + (f"\\n\\n Vui lòng đợi trong 30s để tiếp tục trả lời" if remain_answer == 0 else "")
