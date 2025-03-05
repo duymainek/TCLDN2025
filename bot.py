@@ -80,7 +80,7 @@ def check_answer_limit(code: str) -> Tuple[bool, str]:
     """Check if the user can submit another answer using Supabase function."""
     logger.info(f"Checking answer limit for code: {code}")
     response = supabase.rpc('check_answer_limit_supabase', {'p_code': code}).execute()
-    
+    logger.info(f"Answer limit check response: {response.data}")
     if response.data:
         return response.data[0]['can_answer'], response.data[0]['wait_message'] or ""
     return True, ""
@@ -102,15 +102,16 @@ def update_user_score(code: str, score: float) -> None:
         logger.error(f"Failed to update user score for code {code}: {e}")
         raise
 
-def update_msg_history(code: str, msg: str, is_correct: bool, chapter: int = 0, block: bool = False) -> None:
+def update_msg_history(code: str, msg: str,) -> None:
     """Update message history in Supabase without ranking_chapter."""
+    if not code:
+        logger.warning("Attempted to update msg_history with null code")
+        return
+
     try:
         supabase.table('msg_history').insert({
             'code': code,
             'msg': msg,
-            'is_correct': is_correct,
-            'chapter': chapter,
-            'block': block
         }).execute()
     except Exception as e:
         logger.error(f"Failed to update msg_history: {e}")
@@ -195,15 +196,12 @@ def process_answer(code: str, text: str, user_id: int) -> Optional[str]:
     # Kiểm tra đáp án có đúng không (query bảng answers)
     answer_response = supabase.table('answers').select('chapter').eq('answer', text.replace(' ', '').lower()).execute()
     
-    # Cập nhật msg_history trước, sau đó xử lý ranking nếu đúng
-    chapter = answer_response.data[0]['chapter'] if answer_response.data else 0  # Mặc định chapter = 0 nếu không tìm thấy
-    
     # Luôn cập nhật msg_history (dù đúng hay sai)
     is_correct = bool(answer_response.data)  # True nếu tìm thấy trong answers, False nếu không
-    update_msg_history(code, text, is_correct, chapter, False)
     
     if is_correct:
-        # Nếu đáp án đúng, gọi hàm update_ranking để tính và cập nhật ranking, đồng thời lock chapter_rankings
+        chapter = answer_response.data[0]['chapter'] if answer_response.data else 0  # Mặc định chapter = 0 nếu không tìm thấy
+
         result = supabase.rpc('update_ranking', {
             'p_chapter_id': chapter,
             'p_user_code': code,
@@ -214,7 +212,7 @@ def process_answer(code: str, text: str, user_id: int) -> Optional[str]:
             current_rank = result.data[0] if isinstance(result.data, list) else result.data
             score_coeff = get_score_coefficient(current_rank)
             update_user_score(code, score_coeff)
-            return f"🎉 *Chính xác\\!* Đáp án của bạn hoàn toàn đúng\\! ✅\n\n\\. 🏆 Bạn hiện đang đứng ở *vị trí {current_rank}* trong thử thách mật thư này\\. Tiếp tục cố gắng nhé\\! 🚀\\."
+            return f"🎉 *Chính xác\\!* Đáp án của bạn hoàn toàn đúng\\! ✅\n\n\\. 🏆 Bạn hiện đang đứng ở *vị trí {current_rank}* trong thử thách mật thư trạm {chapter} \\. Tiếp tục cố gắng nhé\\! 🚀\\."
     else:
         return f"Đáp án *{text}* chưa đúng\\, vui lòng thử lại"
 
@@ -224,6 +222,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_id = update.message.from_user.id
     text = update.message.text
     logger.info(f"Received message from user {user_id}: {text}")
+
+    code = BotState.get_code(user_id)
+
+    update_msg_history(code, text)
 
     if BotState.is_blocked(user_id):
         await update.message.reply_text(
@@ -241,9 +243,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     "Chúng tôi đang xác minh thông tin của bạn\\. Hãy giữ kết nối và đừng rời đi nhé\\! 🔍", 
     parse_mode="MarkdownV2"
 )
-
-
-        code = BotState.get_code(user_id)
         if not code:
             name = validate_code(user_id, text)
             if name:
