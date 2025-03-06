@@ -172,7 +172,7 @@ async def ranking(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_score = get_user_total_score(code)
     top_team_name, top_team_score = get_top_team()
     
-    top_info = f"Đội đứng nhất: {top_team_name} với {top_team_score} điểm" if top_team_name else "*Không tìm thấy đội đứng nhất.*"
+    top_info = f"Đội đang đứng đầu tính đến thời điểm hiện tại: {top_team_name}" if top_team_name else "*Không tìm thấy đội đứng nhất.*"
     await update.message.reply_text(
         f"Điểm của bạn là: {user_score} điểm\n{top_info}",
         parse_mode="MarkdownV2"
