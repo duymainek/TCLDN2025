@@ -189,6 +189,7 @@ def validate_code(user_id: int, text: str) -> Optional[str]:
     logger.warning(f"Invalid code: {text}")
     return None
 
+
 def process_answer(code: str, text: str, user_id: int, remain_answer: int) -> Optional[str]:
     """Process an answer submission, updating msg_history for both correct and incorrect answers, and handle ranking for correct answers."""
     logger.info(f"Checking answer '{text.replace(' ', '').lower()}' for code: {code}")
