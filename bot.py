@@ -195,6 +195,9 @@ def process_answer(code: str, text: str, user_id: int, remain_answer: int) -> Op
     
     # Kiểm tra đáp án có đúng không (query bảng answers)
     answer_response = supabase.table('answers').select('chapter, is_lock').eq('answer', text.replace(' ', '').lower()).execute()
+
+    # Log the answer response for debugging
+    logger.info(f"Answer response: {answer_response.data}")
     # Luôn cập nhật msg_history (dù đúng hay sai)
     is_correct = bool(answer_response.data)  # True nếu tìm thấy trong answers, False nếu không
     
