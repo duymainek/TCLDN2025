@@ -135,7 +135,7 @@ def get_top_team() -> Tuple[Optional[str], float]:
     """Fetch the top team (name and score) from the users table."""
     try:
         users_response = supabase.table('users').select('code, name, score').order('score', desc=True).execute()
-        if users_response.data and len(users_response.data) <= 1:
+        if users_response.data and len(users_response.data) == 1:
             return users_response.data[0]['name'], users_response.data[0]['score']
         return None, 0.0
     except Exception as e:
