@@ -176,8 +176,7 @@ async def ranking(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     else:
         top_info = f"Đội đang đứng đầu tính đến thời điểm hiện tại: {top_team_name}"
     await update.message.reply_text(
-        f"Điểm của bạn là: {user_score} điểm\n{top_info}",
-        parse_mode="MarkdownV2"
+        f"Điểm của bạn là: {user_score} điểm\n{top_info}"
     )
 
 def validate_code(user_id: int, text: str) -> Optional[str]:
