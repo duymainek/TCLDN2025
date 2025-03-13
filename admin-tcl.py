@@ -6,6 +6,7 @@ from supabase import create_client, Client
 from datetime import datetime, timezone
 from typing import Tuple, Optional, List, Dict
 
+
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
