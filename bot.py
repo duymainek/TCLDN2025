@@ -171,8 +171,10 @@ async def ranking(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     user_score = get_user_total_score(code)
     top_team_name, top_team_score = get_top_team()
-    
-    top_info = f"Đội đang đứng đầu tính đến thời điểm hiện tại: {top_team_name}" if top_team_name else "*Không tìm thấy đội đứng nhất.*"
+    if top_team_score == 0:
+        top_info = "*Không tìm thấy đội đứng nhất*"
+    else:
+        top_info = f"Đội đang đứng đầu tính đến thời điểm hiện tại: {top_team_name}"
     await update.message.reply_text(
         f"Điểm của bạn là: {user_score} điểm\n{top_info}",
         parse_mode="MarkdownV2"
@@ -195,7 +197,7 @@ def process_answer(code: str, text: str, user_id: int, remain_answer: int) -> Op
     logger.info(f"Checking answer '{text.replace(' ', '').lower()}' for code: {code}")
     
     # Kiểm tra đáp án có đúng không (query bảng answers)
-    answer_response = supabase.table('answers').select('chapter, is_lock').eq('answer', text.replace(' ', '').lower()).execute()
+    answer_response = supabase.table('answers').select('chapter, is_lock, of_user').eq('answer', text.replace(' ', '').lower()).execute()
 
     # Log the answer response for debugging
     logger.info(f"Answer response: {answer_response.data}")
@@ -205,8 +207,11 @@ def process_answer(code: str, text: str, user_id: int, remain_answer: int) -> Op
     if is_correct:
         chapter = answer_response.data[0]['chapter'] if answer_response.data else 0  # Mặc định chapter = 0 nếu không tìm thấy
         is_chapter_lock = answer_response.data[0]['is_lock']
+        of_user = answer_response.data[0]['of_user']
         if is_chapter_lock:
             return f"Trạm {chapter} đã được khóa, bạn không thể trả lời được nữa"
+        if of_user is not None and of_user != code:
+                    return f"Đáp án *{text}* chưa đúng\\, bạn còn {remain_answer} lần để trả lời" + (f"\\n\\n Vui lòng đợi trong 30s để tiếp tục trả lời" if remain_answer == 0 else "")
         result = supabase.rpc('update_ranking', {
             'p_chapter_id': chapter,
             'p_user_code': code,
