@@ -305,6 +305,66 @@ async def select_chapter_to_lock(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text("Trạm không hợp lệ. Vui lòng thử lại.")
             return SELECT_CHAPTER_TO_LOCK
         supabase.table("answers").update({"is_lock": True, "lock_at": "NOW()"}).eq("chapter", chapter_id).execute()
+
+        chapter_ranking_response = supabase.table("chapter_rankings").select("code").eq("chapter", chapter_id).execute()
+        # Log the number of teams in the chapter ranking
+        logger.info(f"Number of teams in chapter {chapter_id} ranking: {len(chapter_ranking_response.data)}")
+        if len(chapter_ranking_response.data) > 0:
+            # Get all teams
+            all_teams_response = supabase.table("users").select("code").execute()
+            all_teams = [team["code"] for team in all_teams_response.data]
+            
+            # Get teams that are in the chapter ranking
+            teams_in_ranking = [team["code"] for team in chapter_ranking_response.data]
+            
+            # Find teams not in the chapter ranking
+            teams_not_in_ranking = [team for team in all_teams if team not in teams_in_ranking]
+            
+            logger.info(f"Teams not in chapter {chapter_id} ranking: {teams_not_in_ranking}")
+            
+            # Add 8 points to teams not in the chapter ranking
+            for team_code in teams_not_in_ranking:
+                # Get current score
+                user_response = supabase.table("users").select("score").eq("code", team_code).execute()
+                current_score = user_response.data[0]["score"] if user_response.data else 0
+                
+                if isinstance(current_score, (int, float)):
+                    current_score = float(current_score)
+                else:
+                    current_score = 0.0
+                
+                # Update score by adding 8 points
+                supabase.table("users").update({"score": current_score + 8}).eq("code", team_code).execute()
+                
+                # Log each team's score update
+                logger.info(f"Added 8 points to team {team_code} (not in ranking), new score: {current_score + 8}")
+            
+            if teams_not_in_ranking:
+                logger.info(f"Added 8 points to {len(teams_not_in_ranking)} teams not in chapter {chapter_id} ranking")
+            else:
+                logger.info(f"All teams are in chapter {chapter_id} ranking, no points added")
+        else:
+            logger.info(f"No teams found in chapter {chapter_id}")
+            teams_response = supabase.table("users").select("code").execute()
+            if teams_response.data:
+                for team in teams_response.data:
+                    # Update score by adding 8 points to each team
+                    # Get current score
+                    user_response = supabase.table("users").select("score").eq("code", team["code"]).execute()
+                    current_score = user_response.data[0]["score"] if user_response.data else 0
+                    if isinstance(current_score, (int, float)):
+                        current_score = float(current_score)
+                    else:
+                        current_score = 0.0
+                    # Update score by adding 8 points
+                    supabase.table("users").update({"score": current_score + 8}).eq("code", team["code"]).execute()
+                    # Log each team's score update
+                    logger.info(f"Added 8 points to team {team['code']}, new score: {current_score + 8}")
+                # Log the action
+                logger.info(f"Added 8 points to all teams after locking chapter {chapter_id}")
+            else:
+                logger.warning(f"No teams found when trying to add points after locking chapter {chapter_id}")
+
         await update.message.reply_text(f"Đã khóa trạm {chapter['name']} thành công.", reply_markup=ReplyKeyboardRemove())
         context.user_data.clear()
         return ConversationHandler.END
