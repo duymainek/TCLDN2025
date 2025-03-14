@@ -28,6 +28,7 @@ user_codes: Dict[int, str] = {}  # Store user_id -> code mapping
 user_blocked: Dict[int, bool] = {}  # Store user_id -> blocked status
 _config_cache: Dict[int, int] = {}
 
+
 def load_config_cache() -> None:
     """Load config data from Supabase into cache."""
     global _config_cache
@@ -153,7 +154,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "*Chào mừng bạn đến với TRÒ CHƠI LỚN ĐÀ NẴNG 2025\\!* 🎉\n"
         "Tôi là *Giao liên* – người bạn đồng hành bí mật của bạn trong hành trình đầy kịch tính này\\. Tôi sẽ luôn *lắng nghe*, *thầm lặng* truyền tải mọi thông điệp của bạn đến Ban Tổ Chức \\(BTC\\) một cách nhanh nhất\\!\n\n"
         "Bạn có thể ra lệnh cho tôi như một điệp viên thực thụ:\n"
-        "*/ranking* – Xem ngay số điểm của bạn và so kè với đội đang *thống lĩnh* bảng xếp hạng\\!\n\n"
+        "*/ranking* – Xem ngay số điểm của bạn và so kè với đội đang *thống lĩnh* bảng xếp hạng\\!\n"
+        "*/restart* – Khởi động lại cuộc trò chuyện và nhập lại mã code của bạn\\.\n\n"
         "Bây giờ, hãy nhập *mật mã* mà BTC đã giao phó cho bạn\\. Đó là chìa khóa để tôi nhận diện bạn trong cuộc chiến này\\! Nhanh lên nào, thời gian không chờ đợi ai đâu\\! ⏳",
         parse_mode="MarkdownV2"
     )
@@ -213,7 +215,7 @@ def process_answer(code: str, text: str, user_id: int, remain_answer: int) -> Op
         if is_chapter_lock:
             return f"Trạm {chapter} đã được khóa, bạn không thể trả lời được nữa"
         if of_user is not None and of_user != code:
-                    return f"Đáp án *{text}* chưa đúng\\, bạn còn {remain_answer} lần để trả lời" + (f"\\n\\n Vui lòng đợi trong 30s để tiếp tục trả lời" if remain_answer == 0 else "")
+                    return f"Đáp án *{text}* chưa đúng\\, bạn còn {remain_answer} lần để trả lời" + (f". Vui lòng đợi trong 30s để tiếp tục trả lời" if remain_answer == 0 else "")
         result = supabase.rpc('update_ranking', {
             'p_chapter_id': chapter,
             'p_user_code': code,
@@ -297,6 +299,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         BotState.set_blocked(user_id, False)
 
+async def restart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle the /restart command to reset user state and require code re-entry."""
+    user_id = update.message.from_user.id
+    logger.info(f"User {user_id} restarted the bot")
+    
+    # Reset user state
+    if user_id in user_codes:
+        del user_codes[user_id]
+    
+    # Reset blocked status
+    BotState.set_blocked(user_id, False)
+    
+    await update.message.reply_text(
+        "*Đã khởi động lại thành công\\!* 🔄\n\n"
+        "Mọi thông tin đã được đặt lại\\. Bây giờ, hãy nhập lại *mật mã* của bạn để tiếp tục hành trình\\! 🔑\n"
+        "Nhớ rằng, mật mã chính là chìa khóa để tôi nhận diện bạn trong cuộc phiêu lưu này\\!",
+        parse_mode="MarkdownV2"
+    )
+
 def main() -> None:
     """Start the Telegram bot."""
     logger.info("Starting the bot...")
@@ -305,6 +326,7 @@ def main() -> None:
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("ranking", ranking))
+    application.add_handler(CommandHandler("restart", restart))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     application.run_polling(allowed_updates=Update.ALL_TYPES)
