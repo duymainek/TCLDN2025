@@ -282,6 +282,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     return ConversationHandler.END
 
+
 async def lockchapter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not chapters_cache:
         await update.message.reply_text("Không có chapter nào trong danh sách.")
