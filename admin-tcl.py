@@ -343,6 +343,7 @@ async def select_chapter_to_lock(update: Update, context: ContextTypes.DEFAULT_T
                 logger.info(f"Added 8 points to {len(teams_not_in_ranking)} teams not in chapter {chapter_id} ranking")
             else:
                 logger.info(f"All teams are in chapter {chapter_id} ranking, no points added")
+                
         else:
             logger.info(f"No teams found in chapter {chapter_id}")
             teams_response = supabase.table("users").select("code").execute()
