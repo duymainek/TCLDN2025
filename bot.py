@@ -232,6 +232,7 @@ def process_answer(code: str, text: str, user_id: int, remain_answer: int) -> Op
     else:
         return f"Đáp án *{text}* chưa đúng\\, bạn còn {remain_answer} lần để trả lời" + (f"\\n\\n Vui lòng đợi trong 30s để tiếp tục trả lời" if remain_answer == 0 else "")
 
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle incoming user messages (codes or answers) with blocking mechanism."""
     user_id = update.message.from_user.id
