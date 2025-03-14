@@ -117,6 +117,7 @@ def update_msg_history(code: str, msg: str,) -> None:
         logger.error(f"Failed to update msg_history: {e}")
         raise
 
+
 def get_score_coefficient(rank: int) -> int:
     """Get the score coefficient from the config table."""
     response = supabase.table('config').select('score_coefficient').eq('rank_position', rank).execute()
