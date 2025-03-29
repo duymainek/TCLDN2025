@@ -37,7 +37,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 refresh_cache()
 
 # Các trạng thái cuộc trò chuyện
-ENTER_PASSWORD, SELECT_CHAPTER, SELECT_TEAM, ENTER_POINTS, ENTER_REASON_ADD, SELECT_DEDUCT_TEAM, ENTER_DEDUCT_POINTS, ENTER_REASON_DEDUCT, SELECT_CHAPTER_TO_LOCK = range(9)
+ENTER_PASSWORD, SELECT_CHAPTER, SELECT_TEAM, ENTER_POINTS, ENTER_REASON_ADD, SELECT_DEDUCT_TEAM, ENTER_DEDUCT_POINTS, ENTER_REASON_DEDUCT, SELECT_CHAPTER_TO_LOCK, SELECT_TCN_CHAPTER, SELECT_FIRST_TEAM, SELECT_SECOND_TEAM, SELECT_THIRD_TEAM, SELECT_FOURTH_TEAM, SELECT_TIN_CHAPTER, SELECT_TIN_FIRST_TEAM, SELECT_TIN_SECOND_TEAM, SELECT_TIN_THIRD_TEAM, SELECT_TIN_FOURTH_TEAM = range(19)
 
 # Các hàm hiện có (chuyển sang bất đồng bộ)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -58,6 +58,8 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/deductpoints - Trừ điểm của một đội\n"
         "/ranking - Xem bảng xếp hạng\n"
         "/lockchapter - Khóa một trạm\n"
+        "/tcn - Xếp hạng TCN\n"
+        "/tin - Xếp hạng TIN\n"
         "/cancel - Hủy thao tác hiện tại"
     )
     await update.message.reply_text(help_text)
@@ -71,6 +73,8 @@ async def check_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "Dùng /deductpoints để trừ điểm\n"
             "Dùng /ranking để xem bảng xếp hạng\n"
             "Dùng /lockchapter để khóa trạm\n"
+            "Dùng /tcn để xếp hạng TCN\n"
+            "Dùng /tin để xếp hạng TIN\n"
             "Dùng /help để xem hướng dẫn chi tiết."
         )
         await update.message.reply_text(welcome_message)
@@ -373,6 +377,476 @@ async def select_chapter_to_lock(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("Lựa chọn không hợp lệ. Vui lòng chọn lại từ danh sách.")
         return SELECT_CHAPTER_TO_LOCK
 
+async def tcn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Start TCN ranking process"""
+    if not chapters_cache:
+        await update.message.reply_text("Không có chapter nào trong danh sách.")
+        return ConversationHandler.END
+    
+    keyboard = [[f"{chapter['name']} (ID: {chapter['id']})"] for chapter in chapters_cache]
+    keyboard.append(["Hủy"])
+    reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+    await update.message.reply_text("Vui lòng chọn chapter để xếp hạng TCN:", reply_markup=reply_markup)
+    return SELECT_TCN_CHAPTER
+
+async def select_tcn_chapter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    selected_text = update.message.text.strip()
+    if selected_text == "Hủy":
+        await update.message.reply_text("Đã hủy quá trình xếp hạng TCN.", reply_markup=ReplyKeyboardRemove())
+        return ConversationHandler.END
+    
+    try:
+        chapter_id = int(selected_text.split("(ID: ")[1].rstrip(")"))
+        chapter = next((c for c in chapters_cache if c["id"] == chapter_id), None)
+        if not chapter:
+            await update.message.reply_text("Chapter không hợp lệ. Vui lòng thử lại.")
+            return SELECT_TCN_CHAPTER
+        
+        context.user_data["tcn_chapter_id"] = chapter_id
+        
+        if not teams_cache:
+            await update.message.reply_text("Không có đội nào trong chapter này.")
+            return ConversationHandler.END
+            
+        keyboard = [[f"{team['name']} (Code: {team['code']})"] for team in teams_cache]
+        keyboard.append(["Hủy"])
+        reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+        await update.message.reply_text("Vui lòng chọn đội đứng nhất:", reply_markup=reply_markup)
+        return SELECT_FIRST_TEAM
+    except (IndexError, ValueError):
+        await update.message.reply_text("Lựa chọn không hợp lệ. Vui lòng chọn lại từ danh sách.")
+        return SELECT_TCN_CHAPTER
+
+async def select_first_team(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    selected_text = update.message.text.strip()
+    if selected_text == "Hủy":
+        await update.message.reply_text("Đã hủy quá trình xếp hạng TCN.", reply_markup=ReplyKeyboardRemove())
+        return ConversationHandler.END
+    
+    try:
+        user_code = selected_text.split("(Code: ")[1].rstrip(")")
+        if not any(team["code"] == user_code for team in teams_cache):
+            await update.message.reply_text("Mã đội không hợp lệ. Vui lòng thử lại.")
+            return SELECT_FIRST_TEAM
+            
+        context.user_data["first_team"] = user_code
+        
+        # Add 10 points to first team
+        user_response = supabase.table("users").select("score").eq("code", user_code).execute()
+        current_score = user_response.data[0]["score"]
+        if isinstance(current_score, (int, float)):
+            current_score = float(current_score)
+        else:
+            current_score = 0.0
+        new_score = current_score + 10
+        
+        supabase.table("users").update({"score": new_score}).eq("code", user_code).execute()
+        supabase.table("point_history").insert({
+            "user_code": user_code,
+            "points_added": 10,
+            "admin_code": "admin123",
+            "chapter": context.user_data["tcn_chapter_id"],
+            "reason": "Nhất tcn"
+        }).execute()
+        
+        # Continue with second team selection
+        keyboard = [[f"{team['name']} (Code: {team['code']})"] for team in teams_cache if team["code"] != user_code]
+        keyboard.append(["Hủy"])
+        reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+        await update.message.reply_text("Vui lòng chọn đội đứng nhì:", reply_markup=reply_markup)
+        return SELECT_SECOND_TEAM
+    except IndexError:
+        await update.message.reply_text("Lựa chọn không hợp lệ. Vui lòng chọn lại từ danh sách.")
+        return SELECT_FIRST_TEAM
+
+async def select_second_team(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    selected_text = update.message.text.strip()
+    if selected_text == "Hủy":
+        await update.message.reply_text("Đã hủy quá trình xếp hạng TCN.", reply_markup=ReplyKeyboardRemove())
+        return ConversationHandler.END
+    
+    try:
+        user_code = selected_text.split("(Code: ")[1].rstrip(")")
+        if not any(team["code"] == user_code for team in teams_cache) or user_code == context.user_data["first_team"]:
+            await update.message.reply_text("Mã đội không hợp lệ hoặc đã được chọn. Vui lòng thử lại.")
+            return SELECT_SECOND_TEAM
+            
+        context.user_data["second_team"] = user_code
+        
+        # Add 8 points to second team
+        user_response = supabase.table("users").select("score").eq("code", user_code).execute()
+        current_score = user_response.data[0]["score"]
+        if isinstance(current_score, (int, float)):
+            current_score = float(current_score)
+        else:
+            current_score = 0.0
+        new_score = current_score + 8
+        
+        supabase.table("users").update({"score": new_score}).eq("code", user_code).execute()
+        supabase.table("point_history").insert({
+            "user_code": user_code,
+            "points_added": 8,
+            "admin_code": "admin123",
+            "chapter": context.user_data["tcn_chapter_id"],
+            "reason": "Nhì tcn"
+        }).execute()
+        
+        # Continue with third team selection
+        keyboard = [[f"{team['name']} (Code: {team['code']})"] for team in teams_cache 
+                   if team["code"] not in [context.user_data["first_team"], user_code]]
+        keyboard.append(["Hủy"])
+        reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+        await update.message.reply_text("Vui lòng chọn đội đứng ba:", reply_markup=reply_markup)
+        return SELECT_THIRD_TEAM
+    except IndexError:
+        await update.message.reply_text("Lựa chọn không hợp lệ. Vui lòng chọn lại từ danh sách.")
+        return SELECT_SECOND_TEAM
+
+async def select_third_team(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    selected_text = update.message.text.strip()
+    if selected_text == "Hủy":
+        await update.message.reply_text("Đã hủy quá trình xếp hạng TCN.", reply_markup=ReplyKeyboardRemove())
+        return ConversationHandler.END
+    
+    try:
+        user_code = selected_text.split("(Code: ")[1].rstrip(")")
+        if not any(team["code"] == user_code for team in teams_cache) or user_code in [context.user_data["first_team"], context.user_data["second_team"]]:
+            await update.message.reply_text("Mã đội không hợp lệ hoặc đã được chọn. Vui lòng thử lại.")
+            return SELECT_THIRD_TEAM
+            
+        context.user_data["third_team"] = user_code
+        
+        # Add 7 points to third team
+        user_response = supabase.table("users").select("score").eq("code", user_code).execute()
+        current_score = user_response.data[0]["score"]
+        if isinstance(current_score, (int, float)):
+            current_score = float(current_score)
+        else:
+            current_score = 0.0
+        new_score = current_score + 7
+        
+        supabase.table("users").update({"score": new_score}).eq("code", user_code).execute()
+        supabase.table("point_history").insert({
+            "user_code": user_code,
+            "points_added": 7,
+            "admin_code": "admin123",
+            "chapter": context.user_data["tcn_chapter_id"],
+            "reason": "Ba tcn"
+        }).execute()
+        
+        # Continue with fourth team selection
+        keyboard = [[f"{team['name']} (Code: {team['code']})"] for team in teams_cache 
+                   if team["code"] not in [context.user_data["first_team"], context.user_data["second_team"], user_code]]
+        keyboard.append(["Hủy"])
+        reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+        await update.message.reply_text("Vui lòng chọn đội đứng tư:", reply_markup=reply_markup)
+        return SELECT_FOURTH_TEAM
+    except IndexError:
+        await update.message.reply_text("Lựa chọn không hợp lệ. Vui lòng chọn lại từ danh sách.")
+        return SELECT_THIRD_TEAM
+
+async def select_fourth_team(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    selected_text = update.message.text.strip()
+    if selected_text == "Hủy":
+        await update.message.reply_text("Đã hủy quá trình xếp hạng TCN.", reply_markup=ReplyKeyboardRemove())
+        return ConversationHandler.END
+    
+    try:
+        user_code = selected_text.split("(Code: ")[1].rstrip(")")
+        if not any(team["code"] == user_code for team in teams_cache) or user_code in [context.user_data["first_team"], context.user_data["second_team"], context.user_data["third_team"]]:
+            await update.message.reply_text("Mã đội không hợp lệ hoặc đã được chọn. Vui lòng thử lại.")
+            return SELECT_FOURTH_TEAM
+            
+        # Add 6 points to fourth team
+        user_response = supabase.table("users").select("score").eq("code", user_code).execute()
+        current_score = user_response.data[0]["score"]
+        if isinstance(current_score, (int, float)):
+            current_score = float(current_score)
+        else:
+            current_score = 0.0
+        new_score = current_score + 6
+        
+        supabase.table("users").update({"score": new_score}).eq("code", user_code).execute()
+        supabase.table("point_history").insert({
+            "user_code": user_code,
+            "points_added": 6,
+            "admin_code": "admin123",
+            "chapter": context.user_data["tcn_chapter_id"],
+            "reason": "Tư tcn"
+        }).execute()
+        
+        # Add 4 points to all other teams
+        all_teams = [team["code"] for team in teams_cache]
+        selected_teams = [context.user_data["first_team"], context.user_data["second_team"], 
+                         context.user_data["third_team"], user_code]
+        other_teams = [team_code for team_code in all_teams if team_code not in selected_teams]
+        
+        for team_code in other_teams:
+            user_response = supabase.table("users").select("score").eq("code", team_code).execute()
+            current_score = user_response.data[0]["score"]
+            if isinstance(current_score, (int, float)):
+                current_score = float(current_score)
+            else:
+                current_score = 0.0
+            new_score = current_score + 4
+            
+            supabase.table("users").update({"score": new_score}).eq("code", team_code).execute()
+            supabase.table("point_history").insert({
+                "user_code": team_code,
+                "points_added": 4,
+                "admin_code": "admin123",
+                "chapter": context.user_data["tcn_chapter_id"],
+                "reason": "Không có kết quả tcn"
+            }).execute()
+        
+        # Refresh cache after updating scores
+        refresh_cache()
+        
+        await update.message.reply_text(
+            "Đã hoàn thành xếp hạng TCN và cập nhật điểm cho tất cả các đội.",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        context.user_data.clear()
+        return ConversationHandler.END
+    except IndexError:
+        await update.message.reply_text("Lựa chọn không hợp lệ. Vui lòng chọn lại từ danh sách.")
+        return SELECT_FOURTH_TEAM
+
+async def tin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Start TIN ranking process"""
+    if not chapters_cache:
+        await update.message.reply_text("Không có chapter nào trong danh sách.")
+        return ConversationHandler.END
+    
+    keyboard = [[f"{chapter['name']} (ID: {chapter['id']})"] for chapter in chapters_cache]
+    keyboard.append(["Hủy"])
+    reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+    await update.message.reply_text("Vui lòng chọn chapter để xếp hạng TIN:", reply_markup=reply_markup)
+    return SELECT_TIN_CHAPTER
+
+async def select_tin_chapter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    selected_text = update.message.text.strip()
+    if selected_text == "Hủy":
+        await update.message.reply_text("Đã hủy quá trình xếp hạng TIN.", reply_markup=ReplyKeyboardRemove())
+        return ConversationHandler.END
+    
+    try:
+        chapter_id = int(selected_text.split("(ID: ")[1].rstrip(")"))
+        chapter = next((c for c in chapters_cache if c["id"] == chapter_id), None)
+        if not chapter:
+            await update.message.reply_text("Chapter không hợp lệ. Vui lòng thử lại.")
+            return SELECT_TIN_CHAPTER
+        
+        context.user_data["tin_chapter_id"] = chapter_id
+        
+        if not teams_cache:
+            await update.message.reply_text("Không có đội nào trong chapter này.")
+            return ConversationHandler.END
+            
+        keyboard = [[f"{team['name']} (Code: {team['code']})"] for team in teams_cache]
+        keyboard.append(["Hủy"])
+        reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+        await update.message.reply_text("Vui lòng chọn đội đứng nhất:", reply_markup=reply_markup)
+        return SELECT_TIN_FIRST_TEAM
+    except (IndexError, ValueError):
+        await update.message.reply_text("Lựa chọn không hợp lệ. Vui lòng chọn lại từ danh sách.")
+        return SELECT_TIN_CHAPTER
+
+async def select_tin_first_team(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    selected_text = update.message.text.strip()
+    if selected_text == "Hủy":
+        await update.message.reply_text("Đã hủy quá trình xếp hạng TIN.", reply_markup=ReplyKeyboardRemove())
+        return ConversationHandler.END
+    
+    try:
+        user_code = selected_text.split("(Code: ")[1].rstrip(")")
+        if not any(team["code"] == user_code for team in teams_cache):
+            await update.message.reply_text("Mã đội không hợp lệ. Vui lòng thử lại.")
+            return SELECT_TIN_FIRST_TEAM
+            
+        context.user_data["tin_first_team"] = user_code
+        
+        # Add 5 points to first team
+        user_response = supabase.table("users").select("score").eq("code", user_code).execute()
+        current_score = user_response.data[0]["score"]
+        if isinstance(current_score, (int, float)):
+            current_score = float(current_score)
+        else:
+            current_score = 0.0
+        new_score = current_score + 5
+        
+        supabase.table("users").update({"score": new_score}).eq("code", user_code).execute()
+        supabase.table("point_history").insert({
+            "user_code": user_code,
+            "points_added": 5,
+            "admin_code": "admin123",
+            "chapter": context.user_data["tin_chapter_id"],
+            "reason": "Nhất tin"
+        }).execute()
+        
+        # Continue with second team selection
+        keyboard = [[f"{team['name']} (Code: {team['code']})"] for team in teams_cache if team["code"] != user_code]
+        keyboard.append(["Hủy"])
+        reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+        await update.message.reply_text("Vui lòng chọn đội đứng nhì:", reply_markup=reply_markup)
+        return SELECT_TIN_SECOND_TEAM
+    except IndexError:
+        await update.message.reply_text("Lựa chọn không hợp lệ. Vui lòng chọn lại từ danh sách.")
+        return SELECT_TIN_FIRST_TEAM
+
+async def select_tin_second_team(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    selected_text = update.message.text.strip()
+    if selected_text == "Hủy":
+        await update.message.reply_text("Đã hủy quá trình xếp hạng TIN.", reply_markup=ReplyKeyboardRemove())
+        return ConversationHandler.END
+    
+    try:
+        user_code = selected_text.split("(Code: ")[1].rstrip(")")
+        if not any(team["code"] == user_code for team in teams_cache) or user_code == context.user_data["tin_first_team"]:
+            await update.message.reply_text("Mã đội không hợp lệ hoặc đã được chọn. Vui lòng thử lại.")
+            return SELECT_TIN_SECOND_TEAM
+            
+        context.user_data["tin_second_team"] = user_code
+        
+        # Add 4 points to second team
+        user_response = supabase.table("users").select("score").eq("code", user_code).execute()
+        current_score = user_response.data[0]["score"]
+        if isinstance(current_score, (int, float)):
+            current_score = float(current_score)
+        else:
+            current_score = 0.0
+        new_score = current_score + 4
+        
+        supabase.table("users").update({"score": new_score}).eq("code", user_code).execute()
+        supabase.table("point_history").insert({
+            "user_code": user_code,
+            "points_added": 4,
+            "admin_code": "admin123",
+            "chapter": context.user_data["tin_chapter_id"],
+            "reason": "Nhì tin"
+        }).execute()
+        
+        # Continue with third team selection
+        keyboard = [[f"{team['name']} (Code: {team['code']})"] for team in teams_cache 
+                   if team["code"] not in [context.user_data["tin_first_team"], user_code]]
+        keyboard.append(["Hủy"])
+        reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+        await update.message.reply_text("Vui lòng chọn đội đứng ba:", reply_markup=reply_markup)
+        return SELECT_TIN_THIRD_TEAM
+    except IndexError:
+        await update.message.reply_text("Lựa chọn không hợp lệ. Vui lòng chọn lại từ danh sách.")
+        return SELECT_TIN_SECOND_TEAM
+
+async def select_tin_third_team(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    selected_text = update.message.text.strip()
+    if selected_text == "Hủy":
+        await update.message.reply_text("Đã hủy quá trình xếp hạng TIN.", reply_markup=ReplyKeyboardRemove())
+        return ConversationHandler.END
+    
+    try:
+        user_code = selected_text.split("(Code: ")[1].rstrip(")")
+        if not any(team["code"] == user_code for team in teams_cache) or user_code in [context.user_data["tin_first_team"], context.user_data["tin_second_team"]]:
+            await update.message.reply_text("Mã đội không hợp lệ hoặc đã được chọn. Vui lòng thử lại.")
+            return SELECT_TIN_THIRD_TEAM
+            
+        context.user_data["tin_third_team"] = user_code
+        
+        # Add 3 points to third team
+        user_response = supabase.table("users").select("score").eq("code", user_code).execute()
+        current_score = user_response.data[0]["score"]
+        if isinstance(current_score, (int, float)):
+            current_score = float(current_score)
+        else:
+            current_score = 0.0
+        new_score = current_score + 3
+        
+        supabase.table("users").update({"score": new_score}).eq("code", user_code).execute()
+        supabase.table("point_history").insert({
+            "user_code": user_code,
+            "points_added": 3,
+            "admin_code": "admin123",
+            "chapter": context.user_data["tin_chapter_id"],
+            "reason": "Ba tin"
+        }).execute()
+        
+        # Continue with fourth team selection
+        keyboard = [[f"{team['name']} (Code: {team['code']})"] for team in teams_cache 
+                   if team["code"] not in [context.user_data["tin_first_team"], context.user_data["tin_second_team"], user_code]]
+        keyboard.append(["Hủy"])
+        reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+        await update.message.reply_text("Vui lòng chọn đội đứng tư:", reply_markup=reply_markup)
+        return SELECT_TIN_FOURTH_TEAM
+    except IndexError:
+        await update.message.reply_text("Lựa chọn không hợp lệ. Vui lòng chọn lại từ danh sách.")
+        return SELECT_TIN_THIRD_TEAM
+
+async def select_tin_fourth_team(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    selected_text = update.message.text.strip()
+    if selected_text == "Hủy":
+        await update.message.reply_text("Đã hủy quá trình xếp hạng TIN.", reply_markup=ReplyKeyboardRemove())
+        return ConversationHandler.END
+    
+    try:
+        user_code = selected_text.split("(Code: ")[1].rstrip(")")
+        if not any(team["code"] == user_code for team in teams_cache) or user_code in [context.user_data["tin_first_team"], context.user_data["tin_second_team"], context.user_data["tin_third_team"]]:
+            await update.message.reply_text("Mã đội không hợp lệ hoặc đã được chọn. Vui lòng thử lại.")
+            return SELECT_TIN_FOURTH_TEAM
+            
+        # Add 2 points to fourth team
+        user_response = supabase.table("users").select("score").eq("code", user_code).execute()
+        current_score = user_response.data[0]["score"]
+        if isinstance(current_score, (int, float)):
+            current_score = float(current_score)
+        else:
+            current_score = 0.0
+        new_score = current_score + 2
+        
+        supabase.table("users").update({"score": new_score}).eq("code", user_code).execute()
+        supabase.table("point_history").insert({
+            "user_code": user_code,
+            "points_added": 2,
+            "admin_code": "admin123",
+            "chapter": context.user_data["tin_chapter_id"],
+            "reason": "Tư tin"
+        }).execute()
+        
+        # Add 1 point to all other teams
+        all_teams = [team["code"] for team in teams_cache]
+        selected_teams = [context.user_data["tin_first_team"], context.user_data["tin_second_team"], 
+                         context.user_data["tin_third_team"], user_code]
+        other_teams = [team_code for team_code in all_teams if team_code not in selected_teams]
+        
+        for team_code in other_teams:
+            user_response = supabase.table("users").select("score").eq("code", team_code).execute()
+            current_score = user_response.data[0]["score"]
+            if isinstance(current_score, (int, float)):
+                current_score = float(current_score)
+            else:
+                current_score = 0.0
+            new_score = current_score + 1
+            
+            supabase.table("users").update({"score": new_score}).eq("code", team_code).execute()
+            supabase.table("point_history").insert({
+                "user_code": team_code,
+                "points_added": 1,
+                "admin_code": "admin123",
+                "chapter": context.user_data["tin_chapter_id"],
+                "reason": "Không có kết quả tin"
+            }).execute()
+        
+        # Refresh cache after updating scores
+        refresh_cache()
+        
+        await update.message.reply_text(
+            "Đã hoàn thành xếp hạng TIN và cập nhật điểm cho tất cả các đội.",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        context.user_data.clear()
+        return ConversationHandler.END
+    except IndexError:
+        await update.message.reply_text("Lựa chọn không hợp lệ. Vui lòng chọn lại từ danh sách.")
+        return SELECT_TIN_FOURTH_TEAM
+
 def main() -> None:
     """Khởi động bot."""
     logger.info("Starting the bot...")
@@ -385,6 +859,8 @@ def main() -> None:
             CommandHandler("addpoints", addpoints),
             CommandHandler("deductpoints", deductpoints),
             CommandHandler("lockchapter", lockchapter),
+            CommandHandler("tcn", tcn),
+            CommandHandler("tin", tin),
         ],
         states={
             ENTER_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, check_password)],
@@ -396,6 +872,16 @@ def main() -> None:
             ENTER_DEDUCT_POINTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_deduct_points)],
             ENTER_REASON_DEDUCT: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_reason_deduct)],
             SELECT_CHAPTER_TO_LOCK: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_chapter_to_lock)],
+            SELECT_TCN_CHAPTER: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_tcn_chapter)],
+            SELECT_FIRST_TEAM: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_first_team)],
+            SELECT_SECOND_TEAM: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_second_team)],
+            SELECT_THIRD_TEAM: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_third_team)],
+            SELECT_FOURTH_TEAM: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_fourth_team)],
+            SELECT_TIN_CHAPTER: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_tin_chapter)],
+            SELECT_TIN_FIRST_TEAM: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_tin_first_team)],
+            SELECT_TIN_SECOND_TEAM: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_tin_second_team)],
+            SELECT_TIN_THIRD_TEAM: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_tin_third_team)],
+            SELECT_TIN_FOURTH_TEAM: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_tin_fourth_team)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
