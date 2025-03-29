@@ -28,7 +28,6 @@ user_codes: Dict[int, str] = {}  # Store user_id -> code mapping
 user_blocked: Dict[int, bool] = {}  # Store user_id -> blocked status
 _config_cache: Dict[int, int] = {}
 
-
 def load_config_cache() -> None:
     """Load config data from Supabase into cache."""
     global _config_cache
@@ -173,6 +172,8 @@ async def ranking(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     parse_mode="MarkdownV2"
 )
         return
+
+    
 
     user_score = get_user_total_score(code)
     top_team_name, top_team_score = get_top_team()
